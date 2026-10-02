@@ -1,5 +1,7 @@
 # Static Encounter Shiny Hunter (Pokemon Crystal) -- V1
 
+Soft-reset shiny hunter for static encounters in Pokémon Crystal (3DS Virtual Console). Python bot using NTR Viewer for screen capture and Luma3DS input redirection, with sprite-based shiny detection.
+
 ## What's new in V1 (vs. V0)
 
 - **NTR-VC can be minimised / left in the background** (ported from the
