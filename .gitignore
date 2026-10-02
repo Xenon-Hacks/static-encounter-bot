@@ -1,0 +1,14 @@
+# Local, per-machine files -- never committed
+config.json
+ref_*.png
+logs/
+alerts/
+hang_report.txt
+shared_frame_test.png
+__pycache__/
+*.pyc
+*.log
+*.MOV
+*.mov
+*.mp4
+*.zip
