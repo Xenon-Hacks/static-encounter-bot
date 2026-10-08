@@ -1,6 +1,71 @@
-# Static Encounter Shiny Hunter (Pokemon Crystal) -- V1
+# Static Encounter Shiny Hunter (Pokemon Crystal) -- V2
 
-## What's new in V1 (vs. V0)
+## What's new in V2: no Pokemon sprites anywhere
+
+- **Shinies are spotted by their animation, not their colours.** When a
+  wild Pokemon is shiny, Crystal plays the shiny animation before its HP
+  box appears: the whole battle screen flashes to a photo-negative for 5
+  frames (the "black flash"), then sparkles circle it. A normal one gets no
+  animation at all. The bot watches for that flash (`shiny_flash.py`).
+  It works the same for every species, so the `NORMAL/` and `SHINY/`
+  sprite folders and `sprite_id.py` are gone, and nothing here contains
+  any Pokemon graphics.
+- **New: run it in BizHawk** (`bizhawk_bot.py`). The emulator plays the
+  game one frame at a time for the bot, so the flash can never be missed,
+  it runs faster than real time, and there's nothing to calibrate. See
+  "Running it in BizHawk" below.
+- The 3DS bot uses the same flash check. It now records frames non-stop
+  on a background thread (`frame_recorder.py`) so the 83 ms flash can't
+  slip past between button presses.
+- **Battle Scene must be ON** in the game's OPTIONS. With it off the game
+  skips battle animations, the shiny one included.
+- What it no longer does: name the species. It only says shiny or not.
+- `tests/` checks the flash detector against simulated battle starts and
+  the BizHawk link against a stand-in emulator (no ROM needed).
+
+How the flash was pinned down, in the pokecrystal decompile
+(github.com/pret/pokecrystal): `BattleStartMessage` in
+`engine/battle/core.asm` plays `ANIM_SEND_OUT_MON` only when
+`BattleCheckEnemyShininess` says shiny; its `.Shiny` branch in
+`data/moves/animations.asm` starts with `BATTLE_BG_EFFECT_FLASH_INVERTED`,
+which (`engine/battle_anims/bg_effects.asm`) reverses the background
+palette for 5 frames. The 3DS Virtual Console's anti-flashing patch only
+touches a few move animations, not this one.
+
+## Running it in BizHawk
+
+1. Install BizHawk (EmuHawk) and `py -m pip install -r requirements.txt`.
+2. Put your Crystal save next to the ROM the way BizHawk expects it
+   (load the ROM once, then File > Save RAM shows where), saved standing
+   right in front of the static encounter, with Battle Scene ON.
+3. Run:
+
+   ```
+   py bizhawk_bot.py --emuhawk C:\path\to\EmuHawk.exe --rom C:\path\to\crystal.gbc
+   ```
+
+   The bot starts EmuHawk with the options it needs (`--socket_ip`,
+   `--socket_port`, `--lua=bizhawk\bridge.lua`). Without `--emuhawk` it
+   prints the exact command for you to start EmuHawk yourself.
+4. When it finds a shiny (or can't tell), it pauses EmuHawk on the battle
+   screen, saves a screenshot to `alerts/`, and stops. The game is yours.
+
+Each attempt: soft reset, wait a random number of frames, mash A at a
+random pace until the battle starts, then press nothing and watch every
+frame until "Wild X appeared!". The randomness matters: an emulator is
+exact, so identical presses would give the identical Pokemon every time.
+
+The bot reads three things from the game's RAM: whether a battle has
+started (`wBattleMode`), the Battle Scene option (it stops and tells you
+if it's off), and, only with `--check-dvs`, the Pokemon's DVs. With
+`--check-dvs` it stops if the flash and the DVs ever disagree, which is a
+good way to confirm the flash check on your setup for the first few
+hundred resets.
+
+In EmuHawk, leave "Screenshot capture OSD" off (the default), so the
+pictures the bot reads have no on-screen messages in them.
+
+## What was new in V1 (vs. V0)
 
 - **NTR-VC can be minimised / left in the background** (ported from the
   Sweet Scent bot v16). With the frame-sharing NTR-VC build the bot reads
@@ -23,8 +88,8 @@
 - Kept from V0 unchanged: the crash-resilience catch-all in the main
   loop, the reset/mash logic, sprite detection, `MASH_TIMEOUT = 30`.
 
-Built on the same proven code as the Sweet Scent / master bots -- species
-and shiny detection, the freeze watchdog, the connection-quality checks,
+Built on the same proven code as the Sweet Scent / master bots -- the
+freeze watchdog, the connection-quality checks,
 the console click-freeze fix -- but for a **soft-reset (SR) static
 encounter** instead of a grass encounter. There's no walking and no
 fleeing at all here.
@@ -52,8 +117,8 @@ attempt after that is identical:
    highlighted, since a save exists), and through any pre-battle
    dialogue -- until the wild Pokemon's battle starts on its own. No
    walking is needed: loading the save puts you right in front of it.
-3. **Identify** the encounter (species + shiny/normal) the same way the
-   Sweet Scent bot does, from the NORMAL/SHINY reference sprites.
+3. **Check** whether the shiny animation's flash played while the battle
+   was starting.
 4. If it's **not** shiny: go straight back to step 1. Soft-resetting
    reloads the exact same save, so there's nothing to flee from and no
    escape-cursor risk to manage.
@@ -91,16 +156,12 @@ didn't want.
 ## Party setup
 
 None needed. There's no flee, so there's no speed/move requirement on
-your lead Pokemon at all.
+your lead Pokemon at all. Battle Scene must be ON in OPTIONS.
 
 ## Setup
 
 1. `py -m pip install -r requirements.txt`
-2. **Reuse your Sweet Scent/master calibration's sprite libraries.**
-   Copy the `NORMAL/` and `SHINY/` folders from that bot's folder into
-   this one. They're species-agnostic (not Route-34-specific), so they
-   work for any static encounter without changes.
-3. Run `py calibrate.py` and follow the 2 prompts:
+2. Run `py calibrate.py` and follow the 2 prompts:
    - drag a box around the whole NTR Viewer game view (skipped if
      you're using the frame-sharing build -- see below),
    - drag a box around a spot that visibly changes once a battle
@@ -120,7 +181,7 @@ returns to. Each cycle prints its progress, e.g.:
 ```
   Soft-resetting (A+B+SELECT+START)...
   Battle started after 34 A presses.
-[0.6 min] Encounter #1... Geodude (#1), normal colours (shiny-ness -0.05). Resetting.
+[0.6 min] Encounter #1... normal (no shiny flash). Resetting.
 ```
 
 `py test_reset.py --ip ...` runs a single soft-reset + mash-to-battle
@@ -142,14 +203,19 @@ cycle so you can confirm the timing works before leaving it unattended.
 
 ## How encounters are checked (any species)
 
-Identical to the Sweet Scent bot: the NORMAL and SHINY folders hold a
-reference sprite per species; the bot finds the Game Boy picture in the
-capture, identifies the species from its silhouette/outline, and
-measures its "shiny-ness" from where its colours sit between that
-species' normal and shiny palettes. It never trusts a single unusual
-look -- an ambiguous read gets re-checked (fresh frames) before it's
-reported. See the Sweet Scent bot's README for the full detection
-methodology and test results; nothing about it changed here.
+A background thread grabs frames as fast as it can from the moment of each
+soft reset. Once "Wild X appeared!" is on screen, the bot looks back over
+the frames since the battle transition went black, for a short burst of
+photo-negative frames between two normal battle screens. Found: shiny.
+Not found: normal. If it can't be sure (for example the frames came in
+more than 75 ms apart, so a 83 ms flash could have fallen between two of
+them), it stops and asks you rather than risk resetting a shiny away.
+
+This needs NTR Viewer to stream smoothly. With the frame-sharing build the
+bot knows the real gap between stream frames and will tell you if the
+stream is too slow; when it reads the screen it can't tell a repeated
+stream frame from a still picture, so keep the stream quality up. BizHawk
+doesn't have this problem at all.
 
 ## Minimising NTR-VC (frame-sharing build)
 

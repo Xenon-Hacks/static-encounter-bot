@@ -4,9 +4,10 @@ calibrate.py -- one-time setup helper. Run this BEFORE static_encounter_bot.py.
 Much shorter than the Sweet Scent/master calibration: this bot never
 navigates a menu and never flees, so it only needs to know (1) where to
 read the picture from and (2) how to tell "still on the pre-battle
-screens" from "battle has started". Everything else (species/shininess)
-reuses the NORMAL/SHINY sprite folders, which you copy over rather than
-calibrate.
+screens" from "battle has started". Shininess needs no calibration: it
+comes from the shiny animation's flash (shiny_flash.py).
+
+Not needed at all for bizhawk_bot.py.
 
 Have NTR Viewer open and showing the 3DS top screen before you start (or
 the frame-sharing build running, for --shared).
@@ -219,8 +220,7 @@ if __name__ == "__main__":
             else:
                 print("battle_indicator_roi already set -- skipping (use "
                       "--battle to redo it).")
-            print("\nAll regions calibrated. Copy over your NORMAL/, SHINY/ "
-                  "folders from the Sweet Scent/master bot, then run:\n"
+            print("\nAll regions calibrated. Now run:\n"
                   "    py static_encounter_bot.py --ip <3ds ip>")
     except Exception:
         import traceback

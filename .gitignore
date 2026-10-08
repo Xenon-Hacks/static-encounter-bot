@@ -5,6 +5,7 @@ logs/
 alerts/
 hang_report.txt
 shared_frame_test.png
+bizhawk_frame.png
 __pycache__/
 *.pyc
 *.log
