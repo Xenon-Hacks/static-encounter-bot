@@ -5,10 +5,10 @@ front of the Pokemon, and every attempt is reset -> mash A through the
 boot logos, title screen, CONTINUE, and any pre-battle dialogue -> the
 battle starts on its own, no walking involved.
 
-Species and shininess come from the reference sprites in the NORMAL and
-SHINY folders next to this script (see sprite_id.py) -- the same
-species-agnostic classifier used by the Sweet Scent bot. It also pauses
-if a Pokemon matches none of them.
+Shininess comes from the shiny animation: a shiny wild Pokemon makes the
+whole battle screen flash to a photo-negative for an instant before its
+HP box appears; a normal one doesn't (see shiny_flash.py). No Pokemon
+graphics are used. Battle Scene must be ON in the game's OPTIONS.
 
 Run calibrate.py first. Then:
     py static_encounter_bot.py --ip <3ds ip>
@@ -28,7 +28,6 @@ Safety rules:
 """
 
 import argparse
-import collections
 import json
 import os
 import sys
@@ -40,7 +39,8 @@ from luma_input import Luma3DSInput, Button
 import cv2
 
 from vision import Capture, match_score
-import sprite_id
+import gb_screen
+from frame_recorder import RecordingCapture
 import shared_frame
 import reset_menu
 import watch
@@ -61,9 +61,6 @@ TRANSIENT_ERROR_PAUSE = 2.0    # brief pause after an unexpected exception
                                # retrying, so a persistent problem doesn't
                                # spam the log at full speed while still
                                # counting toward MAX_RESET_FAILURES
-MIN_TEXT_WAIT = 1.2            # never start reading the wild-Pokemon text
-                               # sooner than this after the battle is
-                               # first detected
 
 
 def load_config():
@@ -105,70 +102,25 @@ def make_capture(cfg):
     return Capture(cfg["capture_region"])
 
 
-def load_sprites():
-    """The reference sprites: NORMAL and SHINY folders next to this script."""
-    base = os.path.dirname(os.path.abspath(__file__))
-    normal_dir, shiny_dir = sprite_id.find_sprite_folders(base)
-    if not normal_dir or not shiny_dir:
-        print(f"The NORMAL and SHINY sprite folders weren't found in {base}.\n"
-              f"Copy them over from your Sweet Scent/master bot folder (one "
-              f"PNG per species, the same file name in each) and start the "
-              f"bot again.")
-        sys.exit(1)
-    library = sprite_id.SpriteLibrary(normal_dir, shiny_dir)
-    if len(library.names) < 10:
-        print(f"Only {len(library.names)} species found in the NORMAL/SHINY "
-              f"folders (a file must exist in BOTH to count) -- check them.")
-        sys.exit(1)
-    return library
-
-
-EXTRA_LOOKS = 3            # re-checks before stopping on anything unusual
-EXTRA_LOOK_GAP = 1.2       # seconds between them
-
-
 def wait_until_fully_shown(cap, timeout=8.0):
-    """Waits until the wild Pokemon is fully displayed: the battle text box
-    has text in it ("Wild X appeared!" only prints once the sprite has
-    finished sliding in), and the text has finished printing (the screen
-    is still). Returns the frame to classify."""
+    """Waits until "Wild X appeared!" is in the battle text box. The shiny
+    animation always plays before that text prints, so by then every frame
+    the flash could be in has been recorded. Returns the current frame."""
     end = time.time() + timeout
     while time.time() < end:
         _heartbeat()
         frame = cap.frame()
-        if sprite_id.battle_text_shown(sprite_id.to_native(frame)):
-            still = watch.wait_still(cap, 0.5, 3.0, heartbeat=_heartbeat)
-            return still if still is not None else cap.frame()
+        if gb_screen.battle_text_shown(gb_screen.native(frame)):
+            return frame
         time.sleep(0.05)
     print("(text box never filled -- checking anyway)", end=" ", flush=True)
     return cap.frame()
 
 
-def settled_classification(cap, library, frame):
-    """Classifies the wild Pokemon, but never trusts a single unusual look.
-    A stalled stream can keep showing a frame from the middle of the
-    battle intro, which matches nothing. The game waits on "Wild X
-    appeared!" until A is pressed, so the bot can take its time: it looks
-    again (fresh, settled frames) up to EXTRA_LOOKS times and only
-    reports something unusual if every look agrees. Returns (result,
-    frame used)."""
-    result = sprite_id.classify(library, frame)
-    looks = 0
-    while result["verdict"] != "normal" and looks < EXTRA_LOOKS:
-        looks += 1
-        print(f"(looks {result['verdict']} -- checking again, {looks}/{EXTRA_LOOKS})",
-              end=" ", flush=True)
-        time.sleep(EXTRA_LOOK_GAP)
-        ntr_status.wait_for_good_quality(heartbeat=_heartbeat)
-        frame = wait_until_fully_shown(cap, timeout=4.0)
-        result = sprite_id.classify(library, frame)
-    return result, frame
-
-
-def save_encounter_picture(frame, species, kind):
+def save_encounter_picture(frame, kind):
     """Keeps a screenshot of anything the bot stops for."""
     os.makedirs("alerts", exist_ok=True)
-    path = os.path.join("alerts", time.strftime(f"%Y%m%d_%H%M%S_{species}_{kind}.png"))
+    path = os.path.join("alerts", time.strftime(f"%Y%m%d_%H%M%S_{kind}.png"))
     cv2.imwrite(path, frame)
     return path
 
@@ -288,19 +240,17 @@ def main():
     print(f"Logging this session to {log_path}")
 
     cfg = load_config()
-    cap = make_capture(cfg)
+    cap = RecordingCapture(make_capture(cfg))
     pad = Luma3DSInput(args.ip)
     watch.install(pad)       # presses from every code path take turns
-    library = load_sprites()
-    print(f"Loaded reference sprites for {len(library.names)} species "
-          f"(normal + shiny).")
+    print("Shiny check: watching for the shiny flash (Battle Scene must be "
+          "ON in the game's OPTIONS).")
     print("Make sure your save is standing right in front of the static "
           "encounter, in the overworld, with no menu open. The bot will "
           "soft-reset from here on, so THIS is the state every attempt "
           "returns to.")
 
     encounters = 0
-    seen = collections.Counter()      # encounters per species
     reset_failures = 0
     start = time.time()
 
@@ -312,6 +262,7 @@ def main():
             try:
                 if wait_for_live_stream(pad):
                     reset_failures = 0
+                cap.clear()      # this attempt's frames only
                 reset_menu.soft_reset(pad)
                 if not reset_menu.mash_to_battle(pad, cap, cfg, in_battle, _heartbeat):
                     if wait_for_live_stream(pad):     # the real reason it failed
@@ -328,58 +279,36 @@ def main():
                     continue
                 reset_failures = 0
 
-                # Until the wild Pokemon has slid in and "Wild X appeared!" has
-                # finished printing (the screen stops changing).
-                battle_seen_at = time.time()
+                # Until "Wild X appeared!" has printed: the shiny flash, if
+                # any, has played by then.
                 ntr_status.wait_for_good_quality(heartbeat=_heartbeat)
                 frame = wait_until_fully_shown(cap)
-                while time.time() - battle_seen_at < MIN_TEXT_WAIT:
-                    time.sleep(0.05)
-                    frame = cap.frame()
                 encounters += 1
                 elapsed_min = (time.time() - start) / 60
                 print(f"[{elapsed_min:.1f} min] Encounter #{encounters}...", end=" ")
 
-                result, frame = settled_classification(cap, library, frame)
-                name = result["species"].title()
+                result = cap.analyse()
                 kind = result["verdict"]
-                if kind == "unknown":
-                    name = "Unknown"
-                seen[name] += 1
                 if kind == "normal":
-                    print(f"{name} (#{seen[name]}), normal colours "
-                          f"(shiny-ness {result['position']:+.2f}). Resetting.")
+                    print(f"normal ({result['reason']}). Resetting.")
                     # No flee needed: the next loop iteration soft-resets right
                     # back to the same save, standing in front of the encounter.
                     continue
+                picture = save_encounter_picture(frame, kind)
+                if kind == "shiny":
+                    print(f"SHINY! ({result['reason']})")
+                    message = (f"SHINY! The shiny flash played ({result['reason']}). "
+                               f"Take over now! Screenshot: {picture}.")
                 else:
-                    picture = save_encounter_picture(frame, name.upper(), kind)
-                    if kind == "shiny":
-                        print(f"{name} -- SHINY!")
-                        message = (f"SHINY {name.upper()}! Its colours match the shiny "
-                                   f"sprite (x{1 / max(result['ratio'], 1e-6):.1f} closer "
-                                   f"than the normal one). Take over now! Screenshot: "
-                                   f"{picture}.")
-                    elif kind == "unsure":
-                        print(f"{name} -- colours too close to call, treating it "
-                              f"as a POSSIBLE SHINY.")
-                        message = (f"POSSIBLE SHINY {name.upper()} -- its colours are "
-                                   f"too close to call (shiny-ness {result['position']:+.2f}, "
-                                   f"0 = normal, 1 = shiny). Check it yourself. "
-                                   f"Screenshot: {picture}. If it's normal, press ENTER "
-                                   f"and the bot will soft-reset and keep going.")
-                    else:
-                        print(f"UNRECOGNISED Pokemon (closest: "
-                              f"{result['species'].title()}, match {result['score']:.2f}).")
-                        message = (f"UNRECOGNISED POKEMON -- it doesn't match any "
-                                   f"reference sprite well (closest: "
-                                   f"{result['species'].title()}, {result['score']:.2f}). "
-                                   f"Screenshot: {picture}. Check it, then press ENTER "
-                                   f"and the bot will soft-reset and keep going.")
-                    pause_for_user(pad, message)
-                    # Whatever's on screen now, the top of the loop soft-resets
-                    # unconditionally -- so resuming is always safe here.
-                    continue
+                    print(f"can't tell: {result['reason']}.")
+                    message = (f"COULDN'T TELL whether this one is shiny: "
+                               f"{result['reason']}. Check it yourself. Screenshot: "
+                               f"{picture}. If it's normal, press ENTER and the bot "
+                               f"will soft-reset and keep going.")
+                pause_for_user(pad, message)
+                # Whatever's on screen now, the top of the loop soft-resets
+                # unconditionally -- so resuming is always safe here.
+                continue
 
             except Exception:
                 # A transient hiccup here -- a dropped screen-capture frame,
@@ -387,7 +316,7 @@ def main():
                 # case on a blank or corrupt frame -- must never take the
                 # whole unattended run down. This isn't hypothetical: two
                 # different uncaught exceptions (mss.ScreenShotError: BitBlt
-                # access denied; a ValueError in sprite_id.find_game on a
+                # access denied; a ValueError in sprite_id.find_game, now gb_screen, on a
                 # degenerate frame) actually crashed the process overnight
                 # on 2026-09-28/29, sitting dead for hours until someone
                 # noticed and restarted it by hand. Log the full traceback
@@ -413,9 +342,8 @@ def main():
     except KeyboardInterrupt:
         elapsed_min = (time.time() - start) / 60
         print(f"\nStopped after {encounters} encounters in {elapsed_min:.1f} min.")
-        if seen:
-            print("By species: " + ", ".join(f"{n} {c}" for n, c in seen.most_common()))
     finally:
+        cap.close()
         pad.close()
 
 
