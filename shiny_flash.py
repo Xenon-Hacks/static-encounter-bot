@@ -92,6 +92,13 @@ def _corr(a, b):
     return float((a * b).sum() / den) if den > 1e-6 else 0.0
 
 
+def transition_end(stats):
+    """Time of the last blank (black) frame, i.e. the end of the battle
+    transition, or None if there wasn't one. The battle intro, and with it
+    the shiny animation, starts right after it."""
+    return next((s.t for s in reversed(stats) if _is_blank(s)), None)
+
+
 def analyse(stats, frame_exact=False):
     """stats: Stat tuples in time order, covering at least the end of the
     battle transition up to the battle text / HP box appearing.

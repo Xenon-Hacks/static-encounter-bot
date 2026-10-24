@@ -144,5 +144,12 @@ class RecordingCapture:
             stats = list(self.recorder.stats)
         return shiny_flash.analyse(stats)
 
+    def transition_end(self):
+        """When the battle transition's black screen ended (time.time()),
+        or None if no black screen has been recorded since clear()."""
+        with self._lock:
+            stats = list(self.recorder.stats)
+        return shiny_flash.transition_end(stats)
+
     def close(self):
         self._stop = True

@@ -95,3 +95,21 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print(f"{name}: ok")
+
+
+def test_transition_end_is_before_the_flash():
+    """The sound check listens from the end of the transition's black
+    screen; the shiny animation must come after it."""
+    rng = np.random.default_rng(7)
+    rec = shiny_flash.FlashRecorder()
+    flash_t = black_t = None
+    for t, f, phase in _until_text(True, rng):
+        rec.add(t, f)
+        if phase == "black":
+            black_t = t
+        if phase == "flash" and flash_t is None:
+            flash_t = t
+    end = shiny_flash.transition_end(list(rec.stats))
+    assert end is not None and abs(end - black_t) < 1e-9
+    assert end < flash_t
+    assert shiny_flash.transition_end([]) is None
