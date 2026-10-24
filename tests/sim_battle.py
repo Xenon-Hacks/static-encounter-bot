@@ -6,7 +6,7 @@ around a wild battle start, as traced in the pokecrystal decompile:
 
   overworld -> transition (palette flashes, then a wipe to all-black) ->
   battle screen with both pictures sliding in -> [shiny only: 5 frames of
-  reversed palettes, then ~64 frames of sparkles] -> the Pokemon's own
+  the battle field's palette reversed, then ~64 frames of sparkles] -> the Pokemon's own
   animation -> HP box + "Wild X appeared!" text.
 
 frames(shiny, rng) yields (frame_number, 160x144 BGR image, phase).
@@ -78,7 +78,12 @@ class Scene:
             rr = self.rng
             idx[112:120, 8:120] = np.where(rr.random((8, 112)) < 0.35, 3, idx[112:120, 8:120])
         if invert:
-            idx = 3 - idx
+            # Game Boy Color: only the battle field's own palette reverses
+            # (its white turns black); the Pokemon keep their colours and
+            # the text box stays as it was -- as in the real game.
+            field = (pal == 0)
+            field[96:] = False
+            idx = np.where(field, 3 - idx, idx)
         out = np.empty((H, W, 3), np.uint8)
         for k, palette in enumerate((self.gray, self.enemy_pal, self.player_pal)):
             m = pal == k

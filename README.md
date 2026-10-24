@@ -1,6 +1,47 @@
-# Static Encounter Shiny Hunter (Pokemon Crystal) -- V2
+# Static Encounter Shiny Hunter (Pokemon Crystal) -- V3
 
-## What's new in V2: no Pokemon sprites anywhere
+## What's new in V3: it listens for the shiny sound too
+
+Ported from the Sweet Scent bot (v26):
+
+- **SFX_SHINE check** (`shine_sound.py`). A shiny's animation plays
+  SFX_SHINE eight times (a square wave stepping 512 -> 683 -> 1024 -> 2048
+  -> 4096 Hz, about 0.8 s in all). Nothing else in a wild battle sounds
+  like it. The bot matches that exact sound against the game audio of each
+  battle's start. Either check seeing a shiny is enough to stop; a clear
+  "no shiny sound" settles a battle whose picture had gaps, so the bot
+  stops to ask you less often.
+- **Where the audio comes from.** With NTR-VC 2.2.0 or later the bot reads
+  the game audio straight from NTR-VC's shared memory (`shared_audio.py`),
+  so NTR-VC can be muted, at 0 volume, or on any output, and other
+  programs' sound never gets in. Turn NTR-VC's audio on in its Debug
+  window: Audio (NTR-HR+). With an older NTR-VC it records the PC's
+  speakers instead (`audio_recorder.py`, needs `soundcard`); there NTR-VC
+  must not be muted, and `--audio-device "Steam Streaming"` picks another
+  output.
+- Thresholds as measured on the real 3DS by the Sweet Scent bot: 35 forced
+  shinies scored 0.12-0.23, about 50,000 normal encounters never went
+  above 0.09. At 0.11 or more the bot calls it shiny, under 0.10 normal,
+  in between it asks you. The PC-speaker path is noisier (normals reached
+  0.13), so it can false-alarm; it never resets a shiny away.
+- The bot only listens to the last 3 s before the battle appeared and
+  after, never to the boot logos and title screen.
+- New options: `--no-sound` (flash only), `--loopback` (PC speakers even
+  when NTR-VC shares its audio), `--audio-device NAME`.
+- **Flash check fixes** from the Sweet Scent bot: on the Game Boy Color only
+  the battle field turns black during the flash (the Pokemon and the text
+  box stay lit), so the check now looks at the field alone, and it keeps
+  track of where the game sits in NTR-VC's frame while the screen is dark.
+  Before, the real flash could be watered down to a missed shiny.
+- **Battle Scene doesn't matter** for the 3DS bot: with it off the game
+  only skips move animations, and the shiny flash and sound still play.
+  (The BizHawk bot still stops when Battle Scene is off.)
+- The BizHawk bot doesn't use the sound: it sees every frame, so the flash
+  can't be missed there.
+- `tests/` adds the sound detector, the shared-audio reader and the bot's
+  sound/flash verdicts.
+
+## What was new in V2: no Pokemon sprites anywhere
 
 - **Shinies are spotted by their animation, not their colours.** When a
   wild Pokemon is shiny, Crystal plays the shiny animation before its HP
@@ -156,7 +197,7 @@ didn't want.
 ## Party setup
 
 None needed. There's no flee, so there's no speed/move requirement on
-your lead Pokemon at all. Battle Scene must be ON in OPTIONS.
+your lead Pokemon at all.
 
 ## Setup
 
@@ -207,7 +248,9 @@ A background thread grabs frames as fast as it can from the moment of each
 soft reset. Once "Wild X appeared!" is on screen, the bot looks back over
 the frames since the battle transition went black, for a short burst of
 photo-negative frames between two normal battle screens. Found: shiny.
-Not found: normal. If it can't be sure (for example the frames came in
+Not found: normal. It also listens to the battle's start for the
+shiny sound (see V3 above); either one finding a shiny stops the bot, and
+a clear "no shiny sound" counts as normal. If it can't be sure (for example the frames came in
 more than 75 ms apart, so a 83 ms flash could have fallen between two of
 them), it stops and asks you rather than risk resetting a shiny away.
 

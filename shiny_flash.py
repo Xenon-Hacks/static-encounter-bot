@@ -15,8 +15,11 @@ github.com/pret/pokecrystal):
   * engine/battle_anims/bg_effects.asm, BattleBGEffect_FlashInverted: the
     background palette is swapped for its exact reverse (white <-> black,
     light <-> dark) for 5 frames (~83 ms), then put back. That's the "black
-    flash": the battle screen, which is mostly white at that moment, turns
-    mostly black for an instant.
+    flash". On the Game Boy Color (and so on the 3DS Virtual Console) only
+    the battle field's own palette is reversed: its white turns black,
+    while the two Pokemon keep their colours and the empty text box below
+    stays white. In the real game (built from the decompile and run in an
+    emulator) the screen goes from ~223 to ~86 brightness.
   * It happens after the battle-start transition (which always ends on an
     all-black screen: DoBattleTransition.done fills every palette with
     black) and before the enemy HP box and "Wild X appeared!" are drawn.
@@ -27,13 +30,18 @@ github.com/pret/pokecrystal):
 So the detector looks at the frames between the end of the transition (the
 last all-black frame) and the moment the battle text/HP box shows, and
 looks for one short burst of "photo-negative" frames: much darker than the
-battle screen around it, but not blank (the outlines that were black turn
-white), lasting a few frames, with a normal battle screen on both sides.
-That holds for every species, so nothing per-Pokemon is needed.
+battle screen around it, but not blank (the Pokemon and the text box stay
+lit), lasting a few frames, with a normal battle screen on both sides.
+The photo-negative test only looks at the battle field above the text box:
+the text box doesn't change, and counting it watered the real flash down
+to a correlation of about -0.3 (-0.2 over NTR-VC: a missed shiny), where
+the field alone gives about -1.0. That holds for every species, so
+nothing per-Pokemon is needed.
 
-One requirement: Battle Scene must be ON in the game's OPTIONS. With it
-off, the game skips battle animations, the shiny one included
-(BattleAnimRunScript -> CheckBattleScene), and there's no flash to see.
+Battle Scene doesn't matter: with it off, BattleAnimRunScript only skips
+MOVE animations (wFXAnimID's high byte is 0), and the shiny animation
+(ANIM_SEND_OUT_MON, $101) isn't one. Checked in the real game too: with
+Battle Scene off the flash and the sparkle sound still play.
 """
 
 import collections
@@ -59,6 +67,8 @@ NEGATIVE_CORR = -0.3     # the flash frame is a photo-negative of the screen
 MAX_SAMPLE_GAP = 0.075   # s; with longer gaps between captured frames a
                          # 0.083 s flash could fall between two of them
 SMALL = (40, 36)         # thumbnail used for the photo-negative check
+FIELD_ROWS = 24          # its rows showing the battle field (Game Boy rows
+                         # 0-95); the text box below them never inverts
 
 
 Stat = collections.namedtuple("Stat", "t mean lit thumb")
@@ -133,7 +143,8 @@ def analyse(stats, frame_exact=False):
             why = f"too long for the shiny flash ({duration:.2f}s)"
         else:
             darkest = min(range(i, j + 1), key=lambda k: seg[k].mean)
-            c = _corr(seg[darkest].thumb, seg[before].thumb)
+            c = _corr(seg[darkest].thumb[:FIELD_ROWS],
+                      seg[before].thumb[:FIELD_ROWS])
             if c > NEGATIVE_CORR:
                 why = f"not a photo-negative of the screen (correlation {c:+.2f})"
             else:
