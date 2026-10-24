@@ -21,10 +21,19 @@ import gb_screen
 import shiny_flash
 
 
+LOCATE_MIN_BRIGHT = 100   # mean brightness (0-255) of the game picture at
+                          # which a frame is trusted to show where the game
+                          # sits in the capture
+RELOCATE_FRAMES = 30      # a smaller game picture must be found on this many
+                          # bright frames (no full-size one between) first
+
+
 class RecordingCapture:
     def __init__(self, cap, keep_seconds=60.0):
         self.cap = cap
         self.recorder = shiny_flash.FlashRecorder(keep_seconds)
+        self._game = None
+        self._smaller = 0
         self._lock = threading.Lock()
         self._latest = None
         self._error = None
@@ -47,6 +56,41 @@ class RecordingCapture:
             return cv2.cvtColor(np.array(sct.grab(region)), cv2.COLOR_BGRA2BGR)
         return grab, None
 
+    def _native(self, frame):
+        """The frame at Game Boy resolution. gb_screen.find_game() locates
+        the game by its bright columns, which fails on the flash itself:
+        the screen goes mostly black, and in NTR-VC's frames (the whole
+        3DS top screen, the game picture in the middle) it then reads the
+        whole frame as the game and the flash no longer looks like a
+        photo-negative -- a missed shiny. The game sits in the same place
+        in every frame, so a dark frame reuses where the last bright one
+        found it.
+
+        On the Game Boy Color the flash only blacks out the battle field:
+        the text box and the Pokemon stay lit, and with the game at 1x in
+        NTR-VC's frame find_game() can then lock onto a small bright patch
+        of them -- which looks bright, so the flash vanished. A smaller
+        picture than the known one is therefore only believed once it has
+        been found on RELOCATE_FRAMES bright frames with no full-size one
+        in between."""
+        h, w = frame.shape[:2]
+        if (w % gb_screen.GB_W == 0 and h % gb_screen.GB_H == 0
+                and w // gb_screen.GB_W == h // gb_screen.GB_H):
+            return gb_screen.native(frame)     # already just the game
+        game = gb_screen.find_game(frame)
+        native = gb_screen.to_native(frame, game)
+        if game != (0, 0, w, h) and native.mean() >= LOCATE_MIN_BRIGHT:
+            if self._game is None or game[2] >= self._game[2] - 4:
+                self._game, self._smaller = game, 0
+                return native
+            self._smaller += 1
+            if self._smaller >= RELOCATE_FRAMES:
+                self._game, self._smaller = game, 0
+                return native
+        if self._game is not None and game != self._game:
+            native = gb_screen.to_native(frame, self._game)
+        return native
+
     def _run(self):
         grab, frame_index = None, None
         last_index = None
@@ -59,14 +103,19 @@ class RecordingCapture:
                 with self._lock:
                     self._latest = frame
                 if frame_index is not None:
-                    index = frame_index()
+                    # The index of the picture frame() just returned. Asking
+                    # frame_index() separately could already report the NEXT
+                    # picture, which would then be skipped as "seen".
+                    index = getattr(self.cap, "last_index", None)
+                    if index is None:
+                        index = frame_index()
                     if index == last_index:
                         time.sleep(0.002)
                         continue
                     last_index = index
                 else:
                     time.sleep(0.005)
-                native = gb_screen.native(frame)
+                native = self._native(frame)
                 with self._lock:
                     self.recorder.add(now, native)
             except Exception as e:      # keep recording; frame() reports it

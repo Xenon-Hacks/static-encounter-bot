@@ -8,7 +8,14 @@ battle starts on its own, no walking involved.
 Shininess comes from the shiny animation: a shiny wild Pokemon makes the
 whole battle screen flash to a photo-negative for an instant before its
 HP box appears; a normal one doesn't (see shiny_flash.py). No Pokemon
-graphics are used. Battle Scene must be ON in the game's OPTIONS.
+graphics are used.
+
+It also listens to NTR-VC's game audio for the shiny animation's sound,
+SFX_SHINE played eight times (shine_sound.py). It reads the audio from
+NTR-VC's shared memory when the viewer shares it (2.2.0 or later), so the
+PC's volume and output device don't matter; otherwise it records the PC's
+speakers (audio_recorder.py). Either check seeing a shiny is enough, and a
+clear "no shiny sound" settles a battle whose picture had gaps.
 
 Run calibrate.py first. Then:
     py static_encounter_bot.py --ip <3ds ip>
@@ -46,6 +53,9 @@ import reset_menu
 import watch
 import ntr_status
 import session_log
+import shine_sound
+import audio_recorder
+import shared_audio
 
 CONFIG_PATH = "config.json"
 
@@ -115,6 +125,84 @@ def wait_until_fully_shown(cap, timeout=8.0):
         time.sleep(0.05)
     print("(text box never filled -- checking anyway)", end=" ", flush=True)
     return cap.frame()
+
+
+SHINE_SHINY = 0.11     # shine-sound match at or above this: shiny. Measured
+                       # by the Sweet Scent bot on the real 3DS over NTR-VC
+                       # shared audio: 35 forced shinies scored 0.12-0.23,
+                       # ~50,000 normal encounters never above 0.09. Over
+                       # the PC-speaker path (--loopback) normals reached
+                       # 0.13, so that path can false-alarm.
+SHINE_NORMAL = 0.10    # below this (with live audio): normal, even when the
+                       # picture had gaps
+AUDIO_MIN_RMS = 0.002  # quieter than this, the audio is treated as missing
+AUDIO_LOOKBACK = 3.0   # s of audio before the battle indicator matched that
+                       # the sound check also hears, in case the indicator
+                       # only shows after the shiny animation. Not further:
+                       # the boot logos and title screen before it are no
+                       # part of the battle and only add room for a false
+                       # match.
+
+
+def sound_check(audio, since):
+    """The shine-sound verdict for the audio recorded since `since`:
+    ("shiny" | "normal" | "unsure" | None, reason). None when there's no
+    usable audio (then the picture decides alone)."""
+    if audio is None:
+        return None, "sound check off"
+    if since is None:
+        return None, "no sound recorded for this battle's start"
+    if audio.error is not None:
+        return None, f"no audio ({audio.error})"
+    x = audio.since(since)
+    if len(x) < audio.sr * 2 or float(x.std()) < AUDIO_MIN_RMS:
+        if isinstance(audio, shared_audio.SharedAudioRecorder):
+            return None, ("no game audio heard (is NTR-VC's audio on in "
+                          "its Debug window: Audio (NTR-HR+)?)")
+        return None, ("no game audio heard (is NTR-VC's audio on, its "
+                      "volume above 0, and --audio-device right?)")
+    score, _at = shine_sound.best_match(x, audio.sr)
+    if score >= SHINE_SHINY:
+        return "shiny", f"shiny sound (match {score:.2f})"
+    if score < SHINE_NORMAL:
+        return "normal", f"no shiny sound (match {score:.2f})"
+    return "unsure", f"maybe the shiny sound (match {score:.2f})"
+
+
+def combine(flash, sound, sound_reason):
+    """One verdict from the flash check and the sound check. Either one
+    seeing a shiny is enough; a clear "no shiny sound" settles a picture
+    that had gaps."""
+    if flash["verdict"] == "shiny" or sound == "shiny":
+        return {"verdict": "shiny",
+                "reason": f"{flash['reason']}; {sound_reason}"}
+    if sound == "normal":
+        return {"verdict": "normal",
+                "reason": f"{sound_reason}; picture: {flash['reason']}"}
+    if sound == "unsure":
+        return {"verdict": "unsure", "reason": sound_reason}
+    return {"verdict": flash["verdict"],
+            "reason": f"{flash['reason']} ({sound_reason})"}
+
+
+def open_audio(args):
+    """NTR-VC's shared audio when the viewer shares it (volume and output
+    device don't matter), else the PC's speakers, else None."""
+    if not args.loopback and shared_audio.available(timeout=2.0):
+        audio = shared_audio.SharedAudioRecorder()
+        print(f"Listening for the shiny sound on: {audio.device}")
+        return audio
+    if not args.loopback:
+        print("This NTR-VC doesn't share its audio (2.2.0 or later does); "
+              "listening to the PC's speakers instead.")
+    try:
+        audio = audio_recorder.AudioRecorder(args.audio_device)
+        print(f"Listening for the shiny sound on: {audio.device}")
+        return audio
+    except Exception as e:
+        print(f"Can't record the PC's sound ({e}); using the shiny "
+              f"flash alone.")
+        return None
 
 
 def save_encounter_picture(frame, kind):
@@ -234,6 +322,18 @@ def main():
     parser.add_argument("--ip", required=True,
                          help="3DS IP address, shown in Rosalina's "
                               "InputRedirection screen")
+    parser.add_argument("--no-sound", action="store_true",
+                         help="don't listen for the shiny sound; use the "
+                              "shiny flash alone")
+    parser.add_argument("--audio-device",
+                         help="only with an NTR-VC older than 2.2.0 (no "
+                              "audio sharing): listen to this output device "
+                              "(part of its name) instead of the default "
+                              "speakers, e.g. \"Steam Streaming\" (see "
+                              "audio_recorder.py)")
+    parser.add_argument("--loopback", action="store_true",
+                         help="listen to the PC's speakers even if NTR-VC "
+                              "shares its audio")
     args = parser.parse_args()
     log_path = session_log.start(prefix="static_encounter")
     _disable_console_select_freeze()
@@ -242,9 +342,15 @@ def main():
     cfg = load_config()
     cap = RecordingCapture(make_capture(cfg))
     pad = Luma3DSInput(args.ip)
+    audio = None
+    if not args.no_sound:
+        audio = open_audio(args)
     watch.install(pad)       # presses from every code path take turns
-    print("Shiny check: watching for the shiny flash (Battle Scene must be "
-          "ON in the game's OPTIONS).")
+    if audio is not None:
+        print("Shiny check: watching for the shiny flash and listening for "
+              "the shiny sound.")
+    else:
+        print("Shiny check: watching for the shiny flash.")
     print("Make sure your save is standing right in front of the static "
           "encounter, in the overworld, with no menu open. The bot will "
           "soft-reset from here on, so THIS is the state every attempt "
@@ -263,6 +369,7 @@ def main():
                 if wait_for_live_stream(pad):
                     reset_failures = 0
                 cap.clear()      # this attempt's frames only
+                attempt_start = time.time()
                 reset_menu.soft_reset(pad)
                 if not reset_menu.mash_to_battle(pad, cap, cfg, in_battle, _heartbeat):
                     if wait_for_live_stream(pad):     # the real reason it failed
@@ -278,6 +385,9 @@ def main():
                         reset_failures = 0
                     continue
                 reset_failures = 0
+                # The sound check hears the battle's start only, not the
+                # boot logos and title screen of this attempt.
+                listen_from = max(attempt_start, time.time() - AUDIO_LOOKBACK)
 
                 # Until "Wild X appeared!" has printed: the shiny flash, if
                 # any, has played by then.
@@ -287,7 +397,8 @@ def main():
                 elapsed_min = (time.time() - start) / 60
                 print(f"[{elapsed_min:.1f} min] Encounter #{encounters}...", end=" ")
 
-                result = cap.analyse()
+                sound, sound_reason = sound_check(audio, listen_from)
+                result = combine(cap.analyse(), sound, sound_reason)
                 kind = result["verdict"]
                 if kind == "normal":
                     print(f"normal ({result['reason']}). Resetting.")
@@ -345,6 +456,8 @@ def main():
     finally:
         cap.close()
         pad.close()
+        if audio is not None:
+            audio.close()
 
 
 if __name__ == "__main__":
