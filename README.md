@@ -24,8 +24,11 @@ Ported from the Sweet Scent bot (v26):
   above 0.09. At 0.11 or more the bot calls it shiny, under 0.10 normal,
   in between it asks you. The PC-speaker path is noisier (normals reached
   0.13), so it can false-alarm; it never resets a shiny away.
-- The bot only listens to the last 3 s before the battle appeared and
-  after, never to the boot logos and title screen.
+- The bot only listens to the battle intro: from the end of the battle
+  transition's black screen until "Wild X appeared!". Never to the boot
+  logos, the title screen or the legendary's cry in the overworld, which
+  in an emulator matched the shiny sound about as well as a normal
+  battle's own intro.
 - New options: `--no-sound` (flash only), `--loopback` (PC speakers even
   when NTR-VC shares its audio), `--audio-device NAME`.
 - **Flash check fixes** from the Sweet Scent bot: on the Game Boy Color only

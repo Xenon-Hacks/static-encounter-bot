@@ -136,12 +136,17 @@ SHINE_SHINY = 0.11     # shine-sound match at or above this: shiny. Measured
 SHINE_NORMAL = 0.10    # below this (with live audio): normal, even when the
                        # picture had gaps
 AUDIO_MIN_RMS = 0.002  # quieter than this, the audio is treated as missing
-AUDIO_LOOKBACK = 3.0   # s of audio before the battle indicator matched that
-                       # the sound check also hears, in case the indicator
-                       # only shows after the shiny animation. Not further:
-                       # the boot logos and title screen before it are no
-                       # part of the battle and only add room for a false
-                       # match.
+AUDIO_MARGIN = 0.5     # s of audio before the battle transition's black
+                       # screen ended that the sound check also hears. The
+                       # shiny sound plays well after it: for Ho-Oh, in an
+                       # emulator, it starts 1.6 s after the black screen
+                       # ends and 3.6 s before "Wild HO-OH appeared!".
+                       # Earlier audio (the title screen, Ho-Oh's overworld
+                       # cry) is no part of the battle and in an emulator
+                       # matched the shiny sound as well as a normal battle
+                       # start did.
+AUDIO_FALLBACK = 10.0  # s before the battle indicator matched, when no black
+                       # transition screen was recorded
 
 
 def sound_check(audio, since):
@@ -385,9 +390,7 @@ def main():
                         reset_failures = 0
                     continue
                 reset_failures = 0
-                # The sound check hears the battle's start only, not the
-                # boot logos and title screen of this attempt.
-                listen_from = max(attempt_start, time.time() - AUDIO_LOOKBACK)
+                battle_seen_at = time.time()
 
                 # Until "Wild X appeared!" has printed: the shiny flash, if
                 # any, has played by then.
@@ -397,6 +400,15 @@ def main():
                 elapsed_min = (time.time() - start) / 60
                 print(f"[{elapsed_min:.1f} min] Encounter #{encounters}...", end=" ")
 
+                # The sound check hears the battle intro only: from the end
+                # of the transition's black screen, not the boot logos, the
+                # title screen or the overworld cry before it.
+                black_end = cap.transition_end()
+                if black_end is not None:
+                    listen_from = black_end - AUDIO_MARGIN
+                else:
+                    listen_from = battle_seen_at - AUDIO_FALLBACK
+                listen_from = max(attempt_start, listen_from)
                 sound, sound_reason = sound_check(audio, listen_from)
                 result = combine(cap.analyse(), sound, sound_reason)
                 kind = result["verdict"]
