@@ -202,6 +202,26 @@ didn't want.
 None needed. There's no flee, so there's no speed/move requirement on
 your lead Pokemon at all.
 
+## What you need
+
+- A **New 3DS, New 3DS XL or New 2DS XL** with **Luma3DS** custom
+  firmware (NTR-HR streaming doesn't support the original models).
+- **[NTR-HR-VC](https://github.com/Xenon-Hacks/NTR-HR-VC)** on the 3DS,
+  for streaming the screen and sound to the PC. It's our build of NTR-HR
+  (a fork of [xzn/ntr-hr](https://github.com/xzn/ntr-hr)) with fixes for
+  stream drops during long runs and an SD card log; its
+  [changes page](https://github.com/Xenon-Hacks/NTR-HR-VC/blob/full-width/docs/NTR-HR-VC-CHANGES.md)
+  lists the builds. The
+  [3DS wireless streaming guide](https://wiki.hacks.guide/wiki/3DS:Wireless_streaming)
+  covers setting up NTR-HR in general.
+- **[NTR-VC](https://github.com/Xenon-Hacks/NTR-VC) 2.2.0 or later**, our
+  frame-sharing fork of [NTRViewer-HR](https://github.com/xzn/ntrviewer-hr):
+  download `NTR-VC-Win-x64.zip` from the
+  [NTR-VC releases page](https://github.com/Xenon-Hacks/NTR-VC/releases),
+  unzip it and run `ntrviewer.exe`. It shares the game picture and sound
+  with the bot (the normal NTRViewer-HR doesn't).
+- Not needed for the BizHawk bot (see "Running it in BizHawk").
+
 ## Setup
 
 1. `py -m pip install -r requirements.txt`
@@ -265,13 +285,16 @@ doesn't have this problem at all.
 
 ## Minimising NTR-VC (frame-sharing build)
 
-With the frame-sharing build of NTRViewer-HR (ntrviewer-hr-frame-share.zip,
-see its FRAME_SHARE_README.md), the bot reads the game picture straight
+With [NTR-VC](https://github.com/Xenon-Hacks/NTR-VC) (download
+`NTR-VC-Win-x64.zip` from its
+[releases page](https://github.com/Xenon-Hacks/NTR-VC/releases); its
+[NTR-VC.md](https://github.com/Xenon-Hacks/NTR-VC/blob/main/NTR-VC.md)
+explains what it adds), the bot reads the game picture straight
 from the viewer instead of off the screen, so NTR-VC can be minimised,
 covered or moved anywhere while the bot runs. Button presses are
 unaffected.
 
-1. Start the frame-sharing ntrviewer.exe and connect it to the 3DS.
+1. Start NTR-VC's ntrviewer.exe and connect it to the 3DS.
 2. `py test_shared_frame.py` -- checks the connection and saves
    shared_frame_test.png. The game should be upright, with black bars left
    and right. If not, try `--rotation 0`, `2` or `3`, and put the one that
